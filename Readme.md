@@ -171,6 +171,23 @@ all 6 emotions.
 }
 ```
 
+**Response:**
+
+```json
+{
+  "predicted_emotion": "joy",
+  "confidence": 0.91,
+  "all_probabilities": {
+    "sadness": 0.01,
+    "joy": 0.91,
+    "love": 0.03,
+    "anger": 0.01,
+    "fear": 0.02,
+    "surprise": 0.02
+  }
+}
+```
+
 ## Tech stack
 
 - **Backend:** FastAPI, TensorFlow/Keras, PyTorch, Hugging Face Transformers
