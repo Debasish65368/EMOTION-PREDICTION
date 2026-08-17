@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from keras.models import load_model
+from tensorflow.keras.models import load_model
 import numpy as np
 import pickle
 import re
@@ -84,7 +84,7 @@ class PredictionResponse(BaseModel):
     text: str
     predicted_emotion: str
     confidence : float
-    all_probabilites: dict[str, float]
+    all_probabilities: dict[str, float]
 
 class HealthResponse(BaseModel):
     status: str
@@ -119,7 +119,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"], # TODO: Replace wildcard with actual deployed origin(s)
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -144,7 +144,8 @@ def server_ui():
 #B. Health Check Endpoint ('/health')
 @app.get('/health', response_model=HealthResponse)
 def health_check():
-    return HealthResponse(status="Server is running", model_loaded=bool(dl_model))
+    model_loaded = dl_model.get("BiGRU") is not None and dl_model.get("Tokenizer") is not None
+    return HealthResponse(status="Server is running", model_loaded=model_loaded)
 
 #C. Predict Emotion Endpoint ('/predict')
 @app.post('/predict', response_model=PredictionResponse)
@@ -165,6 +166,8 @@ def predict_emotion(text_input: TextInput):
 
     #1. 
     cleaned_text = preprocess_text(text_input.text)
+    if not cleaned_text:
+        raise HTTPException(status_code=400, detail="Please enter text containing letters or numbers.")
 
     #2. and 3. 
     tokenized_text = tokenizer_model.texts_to_sequences([cleaned_text])
@@ -178,7 +181,7 @@ def predict_emotion(text_input: TextInput):
     probabilites     = BiGRU_model.predict(padded_sequence)[0]
 
     top_emotion_index = int(np.argmax(probabilites)) # 4
-    all_probabilites =  {
+    all_probabilities =  {
         label: float(prob) for prob, label in zip(probabilites, emotion_labels)
           
     }
@@ -187,5 +190,5 @@ def predict_emotion(text_input: TextInput):
         text = text_input.text,
         predicted_emotion = emotion_labels[top_emotion_index],
         confidence = float(probabilites[top_emotion_index]), 
-        all_probabilites = all_probabilites
+        all_probabilities = all_probabilities
     )

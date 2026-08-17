@@ -151,7 +151,7 @@
     el.confidenceText.textContent = `${(data.confidence * 100).toFixed(1)}% confidence`;
     el.echoedText.textContent = `“${originalText}”`;
 
-    renderBars(data.all_probabilites);
+    renderBars(data.all_probabilities);
 
     el.resultSection.hidden = false;
     el.resultSection.classList.remove("entering");
