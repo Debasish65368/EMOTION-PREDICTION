@@ -154,17 +154,22 @@ uvicorn main:app --reload --port 8000
 
 Then open `http://127.0.0.1:8000` in your browser.
 
-### API
 
-POST /predict
-Content-Type: application/json
+## API
 
-Request body:
+### POST `/predict`
 
-{ "text": "I am so happy today" }
+Predicts the emotion of the given text and returns
+the confidence score along with probabilities for
+all 6 emotions.
 
-Returns predicted emotion, confidence, and the full probability
-breakdown across all 6 classes.
+**Request:**
+
+```json
+{
+  "text": "I am so happy today"
+}
+```
 
 ## Tech stack
 
