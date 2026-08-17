@@ -138,9 +138,16 @@
   function renderResult(data, originalText) {
     const emotion = data.predicted_emotion;
     let emoji = EMOJI[emotion] || "🙂";
+    let displayEmotionWord = capitalize(emotion);
     
     if (emotion === "uncertain") {
-        emoji = "🤔";
+        const sortedEmotions = Object.entries(data.all_probabilities).sort((a, b) => b[1] - a[1]);
+        const top1 = sortedEmotions[0][0];
+        const top2 = sortedEmotions[1][0];
+        
+        emoji = EMOJI[top1];
+        displayEmotionWord = `Leaning: ${capitalize(top1)} / ${capitalize(top2)}`;
+        
         document.body.removeAttribute("data-emotion");
     } else {
         document.body.setAttribute("data-emotion", emotion);
@@ -151,11 +158,11 @@
     el.orbEmoji.style.opacity = "1";
     exitThinking(true);
 
-    el.emotionWord.textContent = capitalize(emotion);
+    el.emotionWord.textContent = displayEmotionWord;
     el.emotionEmoji.textContent = emoji;
     
     if (emotion === "uncertain") {
-        el.confidenceText.textContent = "Low confidence / Mixed signals";
+        el.confidenceText.textContent = "Mixed emotional signals detected";
     } else {
         el.confidenceText.textContent = `${(data.confidence * 100).toFixed(1)}% confidence`;
     }
