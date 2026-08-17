@@ -3,9 +3,8 @@
 A FastAPI + deep learning app that predicts the emotion behind a sentence
 across 6 classes: **sadness, joy, love, anger, fear, surprise**.
 
-**Live demo:** [your Render URL] — currently running the original BiGRU
-model. See [Known Issues](#known-limitations) for why this differs from
-the code in this repo.
+**Live demo:** https://emotion-prediction-0fey.onrender.com — currently running the original BiGRU
+model. See [Known Issues](#known-limitations) for why this differs from the code in this repo.
 
 ---
 
