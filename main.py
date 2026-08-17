@@ -1,6 +1,4 @@
 
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.preprocessing.text import Tokenizer
 from fastapi.staticfiles import StaticFiles
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,8 +6,9 @@ from contextlib import asynccontextmanager
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from tensorflow.keras.models import load_model
+from transformers import AutoTokenizer, AutoModel
+import torch
 import numpy as np
-import pickle
 import re
 
 
@@ -18,18 +17,14 @@ import re
 """
 1. We are going to make some constants like:
 A. Model Path (BiGRU)
-B. Tokenizer Path
-C. Max Sequence Length
-D. Emotion Labels
-E. Emotion emojis
+B. Max Sequence Length
+C. Emotion Labels
+D. Emotion emojis
 """
 #A. Model Path (BiGRU)
-model_path = "Artifacts/BiGRU_Model.keras"
+model_path = "Artifacts/MiniLM_Sequence_Classifier.keras"
 
-#B. Tokenizer Path
-tokenizer_path = "Artifacts/tokenizer.pkl"
-
-#C. Max Sequence Length
+#B. Max Sequence Length
 max_sequence_length = 50
 
 #D. Emotion Labels
@@ -100,8 +95,10 @@ dl_model = {} #{1. BiGRU, 2. Tokenizer}-> True , {} -> False
 async def lifespan(app: FastAPI):
     print('Loading the model and tokenizer...')
     dl_model["BiGRU"] = load_model(model_path)                      #BiGRU Model
-    with open(tokenizer_path, 'rb') as file:
-        dl_model["Tokenizer"] = pickle.load(file)
+    dl_model["TransformerTokenizer"] = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+    transformer = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
+    transformer.eval()
+    dl_model["Transformer"] = transformer
     print('Model are loaded successfully...')   
 
     yield #Pause, model is laoded and server is running and at this point model wait karega for request
@@ -144,7 +141,7 @@ def server_ui():
 #B. Health Check Endpoint ('/health')
 @app.get('/health', response_model=HealthResponse)
 def health_check():
-    model_loaded = dl_model.get("BiGRU") is not None and dl_model.get("Tokenizer") is not None
+    model_loaded = dl_model.get("BiGRU") is not None and dl_model.get("TransformerTokenizer") is not None and dl_model.get("Transformer") is not None
     return HealthResponse(status="Server is running", model_loaded=model_loaded)
 
 #C. Predict Emotion Endpoint ('/predict')
@@ -159,9 +156,10 @@ def predict_emotion(text_input: TextInput):
     """
 
     BiGRU_model     = dl_model.get("BiGRU")
-    tokenizer_model = dl_model.get("Tokenizer")
+    tokenizer_model = dl_model.get("TransformerTokenizer")
+    transformer_model = dl_model.get("Transformer")
 
-    if BiGRU_model is None or tokenizer_model is None:
+    if BiGRU_model is None or tokenizer_model is None or transformer_model is None:
         raise HTTPException(status_code=503, detail="Model is not loaded yet. Please try again later.")
 
     #1. 
@@ -170,13 +168,19 @@ def predict_emotion(text_input: TextInput):
         raise HTTPException(status_code=400, detail="Please enter text containing letters or numbers.")
 
     #2. and 3. 
-    tokenized_text = tokenizer_model.texts_to_sequences([cleaned_text])
-    padded_sequence = pad_sequences(
-        tokenized_text,
-        maxlen=max_sequence_length,
-        padding="post",
-        truncating="post"
+    encoded = tokenizer_model(
+        [cleaned_text], 
+        max_length=max_sequence_length, 
+        padding='max_length', 
+        truncation=True, 
+        return_tensors='pt'
     )
+    with torch.no_grad():
+        outputs = transformer_model(**encoded)
+        last_hidden_state = outputs.last_hidden_state
+        mask = encoded['attention_mask'].unsqueeze(-1).expand_as(last_hidden_state)
+        masked_hidden_state = last_hidden_state * mask
+        padded_sequence = masked_hidden_state.numpy()
 
     probabilites     = BiGRU_model.predict(padded_sequence)[0]
 
@@ -186,9 +190,19 @@ def predict_emotion(text_input: TextInput):
           
     }
 
+    # Confidence Threshold Safeguard
+    sorted_probs = np.sort(probabilites)[::-1]
+    top_prob = float(sorted_probs[0])
+    second_prob = float(sorted_probs[1]) if len(sorted_probs) > 1 else 0.0
+    
+    if top_prob < 0.80 or (top_prob - second_prob) <= 0.10:
+        predicted_emotion = "uncertain"
+    else:
+        predicted_emotion = emotion_labels[top_emotion_index]
+
     return PredictionResponse(
         text = text_input.text,
-        predicted_emotion = emotion_labels[top_emotion_index],
+        predicted_emotion = predicted_emotion,
         confidence = float(probabilites[top_emotion_index]), 
         all_probabilities = all_probabilities
     )
