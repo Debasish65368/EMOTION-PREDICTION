@@ -1,0 +1,10 @@
+datasets>=2.20,<5
+transformers>=4.40,<6
+tensorflow-cpu==2.17.0
+keras==3.13.2
+numpy==1.26.4
+scikit-learn>=1.4,<2
+matplotlib>=3.8,<4
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch

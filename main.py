@@ -9,7 +9,8 @@ from tensorflow.keras.models import load_model
 from transformers import AutoTokenizer, AutoModel
 import torch
 import numpy as np
-import re
+
+from training.preprocessing import preprocess_text
 
 
 
@@ -22,7 +23,7 @@ C. Emotion Labels
 D. Emotion emojis
 """
 #A. Model Path (BiGRU)
-model_path = "Artifacts/MiniLM_Sequence_Classifier.keras"
+model_path = "Artifacts/MiniLM_Sequence_Classifier_retrained.keras"
 
 #B. Max Sequence Length
 max_sequence_length = 50
@@ -50,14 +51,6 @@ B. Remove apostrophes (e.g can't -> cant). -done
 C. Remove Special Characters and Punctuation. -done
 D. Remove extra spaces -done
 """
-
-def preprocess_text(text: str)->str:
-    text = text.lower()
-    text = re.sub(r"'","",text)
-    text = re.sub(r"[^a-z0-9\s]"," ", text)
-    text = re.sub(r"\s+", " ",text).strip()
-    return text
-
 
 """
 3. Request and Response Schemas
@@ -116,7 +109,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # TODO: Replace wildcard with actual deployed origin(s)
+    allow_origins=["https://emotion-prediction-0fey.onrender.com", "http://localhost:8000", "http://127.0.0.1:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -196,7 +189,7 @@ def predict_emotion(text_input: TextInput):
     second_prob = float(sorted_probs[1]) if len(sorted_probs) > 1 else 0.0
     
     if top_prob < 0.80 or (top_prob - second_prob) <= 0.10:
-        predicted_emotion = "uncertain"
+        predicted_emotion = "low_confidence"
     else:
         predicted_emotion = emotion_labels[top_emotion_index]
 

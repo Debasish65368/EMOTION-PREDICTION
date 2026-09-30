@@ -10,7 +10,7 @@
 ![PyTorch](https://img.shields.io/badge/PyTorch-Transformers-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)
 ![HuggingFace](https://img.shields.io/badge/🤗-MiniLM--L6--v2-FFD21E?style=for-the-badge)
 
-**6 emotion classes · 4 architectures compared · 1 root-caused embedding bug · 86% test accuracy, measured honestly**
+**6 emotion classes · 4 architectures compared · 1 root-caused embedding bug · reproducible 86.50% result**
 
 **Live demo:** https://emotion-prediction-0fey.onrender.com *(runs the older BiGRU model — see [Known Limitations](#-known-limitations) for why)*
 
@@ -32,6 +32,7 @@
 - [Known Limitations](#-known-limitations)
 - [API](#-api)
 - [Setup](#-setup)
+- [Reproducible Training](#-reproducible-training)
 - [Tech Stack](#-tech-stack)
 
 ---
@@ -122,7 +123,7 @@ flowchart LR
 |---|---|---|
 | Original from-scratch BiGRU | ~92%* | *Methodology flaw: test set doubled as the early-stopping validation set |
 | MiniLM pooled sentence embedding + Dense head | 69% | Fixed the rare-word bug, but pooling to one vector discarded word-order/sequence information, hurting overall accuracy |
-| **MiniLM per-token embeddings + BiGRU head (shipped)** | **86%** | Cleanly measured — test set touched exactly once. Fixed both bugs while recovering most of the accuracy lost to pooling |
+| **MiniLM per-token embeddings + BiGRU head (shipped)** | **86.50%** | Cleanly measured — test set touched exactly once. Fixed both bugs while recovering most of the accuracy lost to pooling |
 
 ---
 
@@ -185,7 +186,7 @@ flowchart TD
     P["Sort predicted probabilities\ndescending"]
     C1{"Top prediction\n< 80%?"}
     C2{"Gap between top and\nsecond prediction ≤ 10%?"}
-    U["🤔 Return 'uncertain'\nUI shows top-2 leaning emotions\ne.g. 'Leaning: Joy / Love'"]
+    U["🤔 Return 'low_confidence'\nUI shows top-2 leaning emotions\ne.g. 'Leaning: Joy / Love'"]
     E["✅ Return the top emotion\nwith its confidence"]
 
     P --> C1
@@ -198,7 +199,7 @@ flowchart TD
     style E fill:#052e16,color:#fff,stroke:#22c55e
 ```
 
-Rather than showing an unhelpful generic "Uncertain" label, the UI computes the top two leaning emotions from the model's own probability breakdown and displays them directly — e.g. **"Leaning: Joy / Love"** — so the honest hedge reads as a real finding instead of a broken result.
+Rather than showing an unhelpful generic "Low Confidence" label, the UI computes the top two leaning emotions from the model's own probability breakdown and displays them directly — e.g. **"Leaning: Joy / Love"** — so the honest hedge reads as a real finding instead of a broken result.
 
 Testing this threshold surfaced a genuinely interesting pattern: the model doesn't hedge randomly. It hedges specifically where there's real linguistic overlap between classes, and stays confident where there isn't. For example, "enjoy"/"love" language around food splits between **joy** and **love** (a real ambiguity — people use both to mean the same thing), while a word like "thrilled" has no such overlap and resolves to joy at 99.9% confidence. The threshold reflects genuine model uncertainty rather than being a blunt catch-all.
 
@@ -221,7 +222,7 @@ At this threshold, the app catches most — but not all — confidently wrong gu
 
 ## 📸 Screenshots
 
-### 1. Rare-word bug — now honestly uncertain instead of confidently wrong
+### 1. Rare-word bug — now honestly low-confidence instead of confidently wrong
 *Old model: "anger" at 59.1% confidence. New model: correctly reads the sentence as positive (anger drops to 8.7%), and shows "Leaning: Joy / Love" instead of a flat wrong guess.*
 
 ![Food sentence — leaning joy/love](screenshots/food-uncertain.png)
@@ -293,6 +294,48 @@ uvicorn main:app --reload --port 8000
 ```
 
 Then open `http://127.0.0.1:8000` in your browser.
+
+---
+
+## 🔬 Reproducible Training
+
+The repository now includes a reproducible training/evaluation path for the shipped MiniLM classifier. `all-MiniLM-L6-v2` is used as a **frozen feature extractor** and produces per-token hidden states of size `50 × 384`. Those embeddings are generated in small batches and written to disk-backed `.npy` arrays, so the full embedding matrix does not need to remain in RAM.
+
+The classifier architecture recovered directly from `Artifacts/MiniLM_Sequence_Classifier.keras` is:
+
+```text
+Input (50, 384)
+  → Masking(0.0)
+  → Bidirectional GRU(64 per direction)
+  → Dropout(0.3)
+  → Dense(32, ReLU)
+  → Dropout(0.3)
+  → Dense(6, Softmax)
+```
+
+The archived model contains **177,126 parameters**, uses Adam with a `1e-3` learning rate, and uses sparse categorical cross-entropy. The restored pipeline uses the dataset's official `train`, `validation`, and `test` splits; the test split is reserved for final evaluation.
+
+From the repository root:
+
+```powershell
+python -m training.generate_embeddings --batch-size 16 --device cpu
+python -m training.evaluate --model Artifacts/MiniLM_Sequence_Classifier.keras
+python -m training.train --batch-size 32
+python -m training.evaluate --model Artifacts/MiniLM_Sequence_Classifier_retrained.keras
+```
+
+Generated embedding caches and evaluation outputs are intentionally ignored by Git. The training/evaluation scripts are tracked.
+
+### Historical vs Retrained Model
+
+The original README documented approximately **86% test accuracy**. The original training/evaluation source and terminal output were lost with a deleted Antigravity workspace. That number is preserved in `Artifacts/MiniLM_Sequence_Classifier.keras` as a historical baseline.
+
+A fresh evaluation through the restored pipeline with a new retrained model (`Artifacts/MiniLM_Sequence_Classifier_retrained.keras`) yielded:
+- **Accuracy**: 86.50%
+- **Macro F1**: 80.48%
+- **Weighted F1**: 86.48%
+
+This **retrained model is now the production default**, as it offers full provenance and perfectly matches the reconstructed pipeline.
 
 ---
 
