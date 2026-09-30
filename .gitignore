@@ -1,32 +1,13 @@
-# Virtual environment
+﻿__pycache__/
 .venv/
-venv/
-
-# Python cache
-__pycache__/
-*.py[cod]
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Environment variables
 .env
-.env.*
-
-# VS Code
-.vscode/
-
-# OS files
-.DS_Store
-Thumbs.db
-
-# ML-generated caches / temporary artifacts
-*.npy
-*.npz
-scratch/
+scratch_*.py
+test_*.py
+optimize*.py
+fix*.py
+eval_*.py
+export_onnx.py
+custom_gru.py
+test_mem_ps.ps1
 training/cache/
 training/results/
-*.log
-logs/
-.huggingface/
-.cache/

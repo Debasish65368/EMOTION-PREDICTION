@@ -1,201 +1,218 @@
+from fastapi import FastAPI, HTTPException
+
+from pydantic import BaseModel
+
+import onnxruntime as ort
+
+import numpy as np
+
+from tokenizers import Tokenizer
 
 from fastapi.staticfiles import StaticFiles
-from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
+
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
-from tensorflow.keras.models import load_model
-from transformers import AutoTokenizer, AutoModel
-import torch
-import numpy as np
+
+import uvicorn
+
+import gc
+
+
 
 from training.preprocessing import preprocess_text
 
 
 
-
-"""
-1. We are going to make some constants like:
-A. Model Path (BiGRU)
-B. Max Sequence Length
-C. Emotion Labels
-D. Emotion emojis
-"""
-#A. Model Path (BiGRU)
-model_path = "Artifacts/MiniLM_Sequence_Classifier_retrained.keras"
-
-#B. Max Sequence Length
-max_sequence_length = 50
-
-#D. Emotion Labels
-emotion_labels = ["sadness", "joy", "love", "anger", "fear", "surprise"]
-
-#E. Emotion emojis
-EMOTION_EMOJIS = {
-    "sadness": "😢",
-    "joy": "😄",
-    "love": "❤️",
-    "anger": "😠",
-    "fear": "😨",
-    "surprise": "😲",
-}
+app = FastAPI(title="Emotion Prediction API")
 
 
 
-"""
-2. Preprocess the upcoming text
-Cleans raw text so it matches the format used while training.
-A. Convert the text to lowercase. -done
-B. Remove apostrophes (e.g can't -> cant). -done
-C. Remove Special Characters and Punctuation. -done
-D. Remove extra spaces -done
-"""
+# Setup tokenizer
 
-"""
-3. Request and Response Schemas
-A. Text Input -> Input schema the text sent by user. -done
-B. Prediciton Response -> Output schema the emotion to predict. -done
-C. Health Response (Server health check)
-"""
+try:
 
-class TextInput(BaseModel):
-    text : str = Field(
-        ...,
-        min_length=1,
-        max_length=2000,
-        description="The sentence to analyze",
-        json_schema_extra={"example": "I feel so happy and excited"}
-        )
+    tokenizer = Tokenizer.from_pretrained('sentence-transformers/all-MiniLM-L6-v2')
 
-class PredictionResponse(BaseModel):
+    tokenizer.enable_padding(length=50)
+
+    tokenizer.enable_truncation(max_length=50)
+
+except Exception as e:
+
+    print(f"Error loading tokenizer: {e}")
+
+
+
+# Setup ONNX session
+
+try:
+
+    # Disable ONNX Runtime threading completely to minimize memory
+
+    sess_options = ort.SessionOptions()
+
+    sess_options.intra_op_num_threads = 1
+
+    sess_options.inter_op_num_threads = 1
+
+    sess = ort.InferenceSession("Artifacts/MiniLM_Sequence_Classifier_v4.onnx", sess_options, providers=['CPUExecutionProvider'])
+
+except Exception as e:
+
+    print(f"Error loading ONNX model: {e}")
+
+
+
+# Emotion labels mapping
+
+emotion_labels = ['sadness', 'joy', 'love', 'anger', 'fear', 'surprise']
+
+
+
+class TextRequest(BaseModel):
+
     text: str
-    predicted_emotion: str
-    confidence : float
-    all_probabilities: dict[str, float]
-
-class HealthResponse(BaseModel):
-    status: str
-    model_loaded: bool
-
-"""
-4. Model Loading and LifeSpan Management
-Load the model and toknizer once the server starts up.
-"""
-dl_model = {} #{1. BiGRU, 2. Tokenizer}-> True , {} -> False
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    print('Loading the model and tokenizer...')
-    dl_model["BiGRU"] = load_model(model_path)                      #BiGRU Model
-    dl_model["TransformerTokenizer"] = AutoTokenizer.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-    transformer = AutoModel.from_pretrained("sentence-transformers/all-MiniLM-L6-v2")
-    transformer.eval()
-    dl_model["Transformer"] = transformer
-    print('Model are loaded successfully...')   
-
-    yield #Pause, model is laoded and server is running and at this point model wait karega for request
-
-    dl_model.clear() #Ek baar server band ho gaya uske baad model ko memory se hata do.
-               
-
-"""
-5. Mount the static files to the FastAPI app
-A. Enable CORS (Cross-Origin Resource Sharing) to allow requests from different origins.
-"""
-app = FastAPI(
-    lifespan=lifespan
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://emotion-prediction-0fey.onrender.com", "http://localhost:8000", "http://127.0.0.1:8000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-app.mount('/static', StaticFiles(directory="static"), name="static")
 
 
 
-"""
-6. API Endpoints.
-A. Server UI at homepage ('/')
-B. Health Check Endpoint ('/health')
-C. Predict Emotion Endpoint ('/predict')
-"""
+def softmax(x):
 
-#A. Server UI at homepage ('/')
-@app.get('/', include_in_schema=False)
-def server_ui():
-    return FileResponse('static/index.html')
+    e_x = np.exp(x - np.max(x, axis=-1, keepdims=True))
 
-#B. Health Check Endpoint ('/health')
-@app.get('/health', response_model=HealthResponse)
+    return e_x / e_x.sum(axis=-1, keepdims=True)
+
+
+
+@app.post("/predict")
+
+def predict_emotion(request: TextRequest):
+
+    if not request.text or request.text.strip() == "":
+
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+        
+
+    try:
+
+        # Preprocessing
+
+        clean_text = preprocess_text(request.text)
+
+        
+
+        # Tokenize
+
+        encoded = tokenizer.encode(clean_text)
+
+        input_ids = np.array([encoded.ids], dtype=np.int64)
+
+        attention_mask = np.array([encoded.attention_mask], dtype=np.int64)
+
+        
+
+        # Inference
+
+        logits = sess.run(None, {'input_ids': input_ids, 'attention_mask': attention_mask})[0]
+
+        
+
+        # Post-processing
+
+        probs = softmax(logits)[0]
+
+        
+
+        # Low confidence fallback logic
+
+        sorted_indices = np.argsort(probs)[::-1]
+
+        top_idx = sorted_indices[0]
+
+        second_idx = sorted_indices[1]
+
+        
+
+        confidence = float(probs[top_idx])
+
+        second_confidence = float(probs[second_idx])
+
+        
+
+        if confidence < 0.80 and (confidence - second_confidence) <= 0.10:
+
+            top_emotion = emotion_labels[top_idx]
+
+            second_emotion = emotion_labels[second_idx]
+
+            final_emotion_label = f"Leaning: {top_emotion.capitalize()} / {second_emotion.capitalize()}"
+
+        else:
+
+            final_emotion_label = emotion_labels[top_idx]
+
+        
+
+        # Manual garbage collection to keep Render memory stable
+
+        gc.collect()
+
+        
+
+        return {
+
+            "text": request.text,
+
+            "predicted_emotion": final_emotion_label,
+
+            "confidence": round(confidence, 4),
+
+            "all_probabilities": {emotion_labels[i]: round(float(probs[i]), 4) for i in range(len(emotion_labels))}
+
+        }
+
+    except Exception as e:
+
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@app.get("/health")
+
 def health_check():
-    model_loaded = dl_model.get("BiGRU") is not None and dl_model.get("TransformerTokenizer") is not None and dl_model.get("Transformer") is not None
-    return HealthResponse(status="Server is running", model_loaded=model_loaded)
 
-#C. Predict Emotion Endpoint ('/predict')
-@app.post('/predict', response_model=PredictionResponse)
-def predict_emotion(text_input: TextInput):
-    """
-    1. Cleans the input sentences.
-    2. Convert the words into numeric using tokenizer.
-    3. Pad the sequences to ensure uniform length.
-    4. Run prediction using the BiGRU model.
-    5. Return the top emotion and full probability breakdown.
-    """
+    return {"status": "healthy", "model": "ONNX MiniLM BiGRU V4"}
 
-    BiGRU_model     = dl_model.get("BiGRU")
-    tokenizer_model = dl_model.get("TransformerTokenizer")
-    transformer_model = dl_model.get("Transformer")
 
-    if BiGRU_model is None or tokenizer_model is None or transformer_model is None:
-        raise HTTPException(status_code=503, detail="Model is not loaded yet. Please try again later.")
 
-    #1. 
-    cleaned_text = preprocess_text(text_input.text)
-    if not cleaned_text:
-        raise HTTPException(status_code=400, detail="Please enter text containing letters or numbers.")
+@app.get("/ram")
 
-    #2. and 3. 
-    encoded = tokenizer_model(
-        [cleaned_text], 
-        max_length=max_sequence_length, 
-        padding='max_length', 
-        truncation=True, 
-        return_tensors='pt'
-    )
-    with torch.no_grad():
-        outputs = transformer_model(**encoded)
-        last_hidden_state = outputs.last_hidden_state
-        mask = encoded['attention_mask'].unsqueeze(-1).expand_as(last_hidden_state)
-        masked_hidden_state = last_hidden_state * mask
-        padded_sequence = masked_hidden_state.numpy()
+def get_ram():
 
-    probabilites     = BiGRU_model.predict(padded_sequence)[0]
+    import os, psutil
 
-    top_emotion_index = int(np.argmax(probabilites)) # 4
-    all_probabilities =  {
-        label: float(prob) for prob, label in zip(probabilites, emotion_labels)
-          
-    }
+    process = psutil.Process(os.getpid())
 
-    # Confidence Threshold Safeguard
-    sorted_probs = np.sort(probabilites)[::-1]
-    top_prob = float(sorted_probs[0])
-    second_prob = float(sorted_probs[1]) if len(sorted_probs) > 1 else 0.0
-    
-    if top_prob < 0.80 or (top_prob - second_prob) <= 0.10:
-        predicted_emotion = "low_confidence"
-    else:
-        predicted_emotion = emotion_labels[top_emotion_index]
+    return {"ram_mb": process.memory_info().rss / (1024 * 1024)}
 
-    return PredictionResponse(
-        text = text_input.text,
-        predicted_emotion = predicted_emotion,
-        confidence = float(probabilites[top_emotion_index]), 
-        all_probabilities = all_probabilities
-    )
+
+
+# Serve static frontend
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+
+@app.get("/")
+
+def read_index():
+
+    return FileResponse("static/index.html")
+
+
+
+if __name__ == "__main__":
+
+    # Limit workers to 1 to stay within Render's 512 MB memory limit
+
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, workers=1)
+
