@@ -38,7 +38,7 @@
       if (!res.ok) throw new Error("bad status");
       const data = await res.json();
 
-      modelReady = !!data.model_loaded;
+      modelReady = data.status === "healthy";
       if (modelReady) {
         setStatus("live", "model ready — say something");
       } else {
