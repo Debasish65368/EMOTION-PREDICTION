@@ -1,8 +1,4 @@
-<div align="center">
 
-<img src="assets/banner.svg" alt="Moodline - read the emotion inside a sentence" width="100%">
-
-<br>
 
 ### A contextual NLP emotion classifier, served as a lightweight ONNX inference pipeline
 
